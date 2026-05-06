@@ -1,5 +1,4 @@
-# Apply to the OpenShift GitOps control plane namespace (usually openshift-gitops).
-# Requires Application CRD (Argo CD / OpenShift GitOps installed).
+# Optional: OpenShift GitOps. See README “Path 2”. Apply into openshift-gitops (or your Argo namespace).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

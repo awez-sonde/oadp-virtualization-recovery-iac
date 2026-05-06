@@ -1,6 +1,12 @@
-# KubeVirt test VM with a PVC backed by external ODF (Ceph RBD) storage class.
-# CDI DataVolume imports a small CirrOS image; the bound PVC name matches the DV name (test-dr-vm-root).
-# Adjust storageClassName if your cluster uses a different ODF/RBD StorageClass.
+# PoC workload: predictable disk name for GitOps + OADP restore.
+#
+# Native KubeVirt VirtualMachineRestore with Ceph RBD often replaces PVCs with random names
+# (e.g. restore-<uuid>-...), which makes Argo CD fight the cluster. OADP/Velero restores the
+# same Kubernetes objects—including PVC names like test-dr-vm-root—so Git and the live
+# cluster stay aligned (Synced / Healthy).
+#
+# CDI DataVolume imports CirrOS; the PVC name matches the DV name. Adjust storageClassName
+# if your external ODF RBD StorageClass differs.
 ---
 apiVersion: v1
 kind: Namespace

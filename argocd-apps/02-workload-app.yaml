@@ -1,3 +1,4 @@
+# Only 01-test-vm.yaml — Backup lives under backup/ and is applied manually or by pipeline.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -9,6 +10,8 @@ spec:
     repoURL: https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
     targetRevision: main
     path: test-workload
+    directory:
+      include: "01-test-vm.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: dr-gitops-poc
