@@ -1,0 +1,22 @@
+# Apply to the OpenShift GitOps control plane namespace (usually openshift-gitops).
+# Requires Application CRD (Argo CD / OpenShift GitOps installed).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dr-poc-setup
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
+    targetRevision: main
+    path: setup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-adp
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

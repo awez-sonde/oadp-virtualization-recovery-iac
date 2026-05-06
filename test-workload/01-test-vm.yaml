@@ -1,0 +1,60 @@
+# KubeVirt test VM with a PVC backed by external ODF (Ceph RBD) storage class.
+# CDI DataVolume imports a small CirrOS image; the bound PVC name matches the DV name (test-dr-vm-root).
+# Adjust storageClassName if your cluster uses a different ODF/RBD StorageClass.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dr-gitops-poc
+  labels:
+    dr-policy: gold
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: test-dr-vm-root
+  namespace: dr-gitops-poc
+  labels:
+    dr-policy: gold
+spec:
+  source:
+    http:
+      url: https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img
+  pvc:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+    storageClassName: ocs-external-storagecluster-ceph-rbd
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: test-dr-vm
+  namespace: dr-gitops-poc
+  labels:
+    dr-policy: gold
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        dr-policy: gold
+        kubevirt.io/domain: test-dr-vm
+    spec:
+      domain:
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+        machine:
+          type: q35
+        resources:
+          requests:
+            memory: 512Mi
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: test-dr-vm-root

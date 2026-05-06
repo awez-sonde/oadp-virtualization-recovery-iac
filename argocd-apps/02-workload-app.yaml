@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dr-poc-workload
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
+    targetRevision: main
+    path: test-workload
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dr-gitops-poc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,15 @@
+# Velero Restore: must live in the same namespace as the Velero deployment (openshift-adp with OADP).
+# spec.backupName must match an existing Velero Backup object (create that backup via CLI/CI, e.g. after labeling workloads).
+# Do not sync this via Argo CD until you intend to run a restore and the backup exists.
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: gitops-dr-restore-gold
+  namespace: openshift-adp
+  labels:
+    dr-policy: gold
+spec:
+  backupName: gitops-dr-gold-backup
+  restorePVs: true
+  includedNamespaces:
+    - dr-gitops-poc

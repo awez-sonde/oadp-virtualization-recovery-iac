@@ -1,0 +1,19 @@
+# Manual sync only: no spec.syncPolicy.automated so Argo CD will not auto-reconcile this app.
+# Sync when you are ready to apply the Velero Restore (after disaster, and after a Backup with matching name exists).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dr-poc-recovery
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
+    targetRevision: main
+    path: recovery
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-adp
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

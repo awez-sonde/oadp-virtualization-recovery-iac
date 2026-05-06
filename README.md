@@ -9,10 +9,13 @@ This repository holds **OpenShift API for Data Protection (OADP)** install and b
 ```text
 README.md
 setup/
-  01-oadp-operator.yaml
-  02-noobaa-obc.yaml
-  03-cloud-credentials.yaml
-  04-dpa.yaml
+  01-oadp-operator.yaml … 04-dpa.yaml
+test-workload/
+  01-test-vm.yaml
+recovery/
+  01-restore.yaml
+argocd-apps/
+  01-setup-app.yaml … 03-recovery-app.yaml
 ```
 
 **Do not** run `git clone https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git` **inside** an existing checkout of the same repository. GitHub’s default folder name matches the repo name, so you end up with `oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/` and may accidentally commit that path. If you need a second copy, clone into a **sibling** directory or use a different folder name:
@@ -127,6 +130,50 @@ Use this when you are not driving the folder from Argo CD (hooks in file **03** 
    ```
 
 **Do not** run `oc apply -f setup/` in one shot on a fresh cluster: Kubernetes may attempt the DPA before the OADP CRD exists, or before the credential Job has written `cloud-credentials`.
+
+---
+
+## `test-workload/` — KubeVirt VM and PVC
+
+| File | Purpose |
+|------|---------|
+| [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) | Namespace **`dr-gitops-poc`**, a **DataVolume** (imports CirrOS; becomes a PVC named **`test-dr-vm-root`**), and a **VirtualMachine** **`test-dr-vm`**. Labels **`dr-policy: gold`** on namespace, DV, and VM. **StorageClass** defaults to **`ocs-external-storagecluster-ceph-rbd`** — change it if your external ODF class differs. |
+
+**Prerequisites:** OpenShift Virtualization (KubeVirt) and **CDI** installed; workers can reach `download.cirros-cloud.net` for the first import (or replace the DV `http` URL with an allowed internal image).
+
+---
+
+## `recovery/` — Velero Restore
+
+| File | Purpose |
+|------|---------|
+| [`recovery/01-restore.yaml`](recovery/01-restore.yaml) | **`Restore`** in **`openshift-adp`**, **`restorePVs: true`**, **`backupName: gitops-dr-gold-backup`**, scoped to **`dr-gitops-poc`**. |
+
+The **Velero `Backup`** that produces that archive is **not** committed here on purpose: backups are point-in-time operations (CLI, script, or a separate GitOps app). Whatever creates the backup must use the **same `metadata.name`** as `spec.backupName` in this Restore, or you edit `01-restore.yaml` to match your backup name.
+
+---
+
+## `argocd-apps/` — Argo CD `Application` objects
+
+Apply these into **`openshift-gitops`** (or the namespace where your Argo CD instance watches **`Application`** CRs). Set **`spec.source.repoURL`** to your fork if needed.
+
+| Order | File | Sync policy |
+|------:|------|----------------|
+| 1 | [`argocd-apps/01-setup-app.yaml`](argocd-apps/01-setup-app.yaml) | **Auto** (`prune` + `selfHeal`) for path **`setup`** → **`openshift-adp`**. |
+| 2 | [`argocd-apps/02-workload-app.yaml`](argocd-apps/02-workload-app.yaml) | **Auto** for path **`test-workload`** → **`dr-gitops-poc`**. |
+| 3 | [`argocd-apps/03-recovery-app.yaml`](argocd-apps/03-recovery-app.yaml) | **Manual only** (no `spec.syncPolicy.automated`) for path **`recovery`** → **`openshift-adp`**. |
+
+**Suggested lifecycle:** sync **setup** → sync **workload** → take a **Backup** named **`gitops-dr-gold-backup`** (include namespace **`dr-gitops-poc`** and label **`dr-policy=gold`** as needed) → on DR, **pause or set sync-policy none on the workload app** (so it does not fight the restore) → **manually sync recovery** once.
+
+---
+
+## DR / Velero / Argo clarifications
+
+1. **`dr-policy: gold` on the Restore CR** labels the Restore object only. Velero does **not** use that label to pick a backup; **`spec.backupName`** is the link to a specific **`Backup`**.
+2. **Label selector on Backup:** when you create a `Backup` CR (YAML or CLI), use `spec.labelSelector` (or `kubectl label` strategy) so only gold workloads are captured. Keep **`includedNamespaces`** / backup scope aligned with **`spec.includedNamespaces`** on the Restore.
+3. **PVC naming:** the DataVolume flow yields a PVC with the **same name as the DataVolume** (`test-dr-vm-root`). After restore, that predictable name helps Argo CD **selfHeal** match desired state instead of recreating a “new” PVC.
+4. **Recovery app without auto-sync:** omitting `automated` under `syncPolicy` is enough for “manual only”; optional hardening is an Argo **AppProject** deny rule for automated sync on that app.
+5. **`CreateNamespace=true`:** allows Argo to create **`dr-gitops-poc`** from the workload app. The workload manifest also defines the Namespace; first sync is idempotent.
 
 ---
 
