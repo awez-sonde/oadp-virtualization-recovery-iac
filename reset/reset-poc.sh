@@ -62,9 +62,11 @@ if ! oc get ns openshift-adp &>/dev/null; then
 fi
 
 log "Deleting Velero restores and backups in openshift-adp (removes backup metadata; object storage may be pruned per Velero)…"
-oc delete restore -n openshift-adp --all --ignore-not-found --wait=true --timeout=5m || true
-oc delete backup -n openshift-adp --all --ignore-not-found --wait=true --timeout=10m || true
-oc delete schedule -n openshift-adp --all --ignore-not-found --wait=true --timeout=2m || true
+# Use velero.io resource names: plain "restore"/"backup" can resolve to another API group (e.g. OCM) and skip Velero CRs,
+# leaving Restore finalizers and blocking namespace deletion after the operator is removed.
+oc delete restore.velero.io -n openshift-adp --all --ignore-not-found --wait=true --timeout=5m || true
+oc delete backup.velero.io -n openshift-adp --all --ignore-not-found --wait=true --timeout=10m || true
+oc delete schedule.velero.io -n openshift-adp --all --ignore-not-found --wait=true --timeout=2m || true
 
 log "Deleting DataProtectionApplication…"
 oc delete dataprotectionapplication -n openshift-adp --all --ignore-not-found --wait=true --timeout=5m || true
@@ -78,7 +80,7 @@ log "Deleting remaining namespaced resources (OBC, secrets, jobs, operatorgroup,
 oc delete operatorgroup openshift-adp -n openshift-adp --ignore-not-found --wait=true --timeout=2m || true
 oc delete obc -n openshift-adp --all --ignore-not-found --wait=true --timeout=5m || true
 
-log "Deleting project/namespace openshift-adp…"
+log "Deleting project/namespace openshift-adp (waiting for finalizers; Velero Restore CRs must be gone first)…"
 oc delete namespace openshift-adp --wait=true --timeout=10m --ignore-not-found || true
 
 log "Finished. If a namespace stays Terminating, check stuck finalizers or dependent resources."
