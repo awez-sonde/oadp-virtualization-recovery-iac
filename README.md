@@ -8,6 +8,15 @@ This repository holds **OpenShift API for Data Protection (OADP)** install and b
 - **NooBaa** storage class available (for example `openshift-storage.noobaa.io`).
 - For GitOps: **OpenShift GitOps (Argo CD)** installed so you can create `Application` objects (typically in `openshift-gitops`).
 
+### Apply from the right copy of this repo
+
+If you ran `git clone ...` **inside** an existing checkout, you may have two trees, for example:
+
+- `.../oadp-virtualization-recovery-iac/setup/` (this project’s root), and  
+- `.../oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/setup/` (nested clone).
+
+`oc apply` uses whatever YAML is on disk in your **current directory**. Run `git pull` in the folder you actually use, or remove the nested clone so you only maintain one tree.
+
 ## What is in `setup/`
 
 | Order | File | Purpose |
@@ -15,7 +24,7 @@ This repository holds **OpenShift API for Data Protection (OADP)** install and b
 | 1 | [`setup/01-oadp-operator.yaml`](setup/01-oadp-operator.yaml) | Creates `openshift-adp`, an `OperatorGroup`, and a `Subscription` to **redhat-oadp-operator** (stable channel). |
 | 2 | [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) | Creates an **ObjectBucketClaim** `velero-dr-noobaa` with a fixed **bucket name** `velero-gitops-dr-poc` for predictable Velero configuration. |
 | 3 | [`setup/03-cloud-credentials.yaml`](setup/03-cloud-credentials.yaml) | RBAC plus a **Job** that reads the OBC Secret and creates **`Secret/cloud-credentials`** with Velero’s expected **`cloud`** key (AWS INI profile). |
-| 4 | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) | **`DataProtectionApplication`** pointing at the NooBaa S3 endpoint (`https://s3.openshift-storage.svc.cluster.local`), the bucket above, object key **`prefix: velero`** (required by OADP when image backup is enabled), and the `kubevirt` + `csi` plugins (with `EnableCSI`). |
+| 4 | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) | **`DataProtectionApplication`** pointing at the NooBaa S3 endpoint (`https://s3.openshift-storage.svc.cluster.local`), the bucket above, object key **`prefix: velero`** (required by OADP when image backup is enabled), **`insecureSkipTLSVerify: "true"`** so Velero can reach in-cluster S3 without the service CA bundle, and the `kubevirt` + `csi` plugins (with `EnableCSI`). |
 
 **Apply order matters** because the OADP CRD is not present until the operator installs, and the DPA needs the `cloud-credentials` Secret.
 
@@ -127,6 +136,10 @@ oc get dataprotectionapplication dr-poc-dpa -n openshift-adp -o yaml
 ```
 
 If the message mentions the **velero prefix**, set `spec.backupLocations[0].velero.objectStorage.prefix` to a value such as `velero` (see note above), then `oc apply -f setup/04-dpa.yaml` again.
+
+### `BackupStorageLocation` phase `Unavailable` (TLS / x509)
+
+If `status.message` on the BSL mentions **`certificate signed by unknown authority`** when calling `https://s3.openshift-storage.svc.cluster.local`, keep **`insecureSkipTLSVerify: "true"`** in the DPA `backupLocations[0].velero.config` (as in this repo’s `04-dpa.yaml`). For stricter TLS, configure Velero with the OpenShift service CA instead of skipping verification.
 
 ### `oc wait subscription` returns NotFound
 

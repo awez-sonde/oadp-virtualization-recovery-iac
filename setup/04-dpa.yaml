@@ -24,7 +24,8 @@ spec:
           region: us-east-1
           s3Url: https://s3.openshift-storage.svc.cluster.local
           s3ForcePathStyle: "true"
-          insecureSkipTLSVerify: "false"
+          # Velero pods do not trust the in-cluster S3 service CA by default; required for NooBaa S3 on many clusters.
+          insecureSkipTLSVerify: "true"
   configuration:
     nodeAgent:
       enable: true
