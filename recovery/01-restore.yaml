@@ -1,5 +1,6 @@
 # Velero Restore (openshift-adp). spec.backupName must match a completed Backup
 # (see ../backup/01-backup-gitops-dr-gold.yaml). Apply only when you intend to restore.
+# Wait for completion: oc wait restore.velero.io/gitops-dr-restore-gold -n openshift-adp --for=jsonpath='{.status.phase}'=Completed (not restore/… — ACM uses that short name).
 apiVersion: velero.io/v1
 kind: Restore
 metadata:

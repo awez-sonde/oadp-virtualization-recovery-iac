@@ -1,5 +1,6 @@
 # Velero Backup for the PoC. Apply after VM is running and BSL is Available.
 # metadata.name must match spec.backupName in ../recovery/01-restore.yaml
+# Wait: oc wait backup.velero.io/gitops-dr-gold-backup -n openshift-adp --for=jsonpath='{.status.phase}'=Completed
 apiVersion: velero.io/v1
 kind: Backup
 metadata:

@@ -68,7 +68,7 @@ Skip [`argocd-apps/`](argocd-apps/). Apply in order; **do not** `oc apply -f set
 
    ```bash
    oc apply -f backup/01-backup-gitops-dr-gold.yaml
-   oc wait --for=jsonpath='{.status.phase}'=Completed -n openshift-adp backup/gitops-dr-gold-backup --timeout=30m
+   oc wait backup.velero.io/gitops-dr-gold-backup -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
    ```
 
 4. **Optional DR drill:** delete VM + DataVolume; then restore:
@@ -77,7 +77,7 @@ Skip [`argocd-apps/`](argocd-apps/). Apply in order; **do not** `oc apply -f set
    oc delete vm test-dr-vm -n dr-gitops-poc --wait=true
    oc delete datavolume test-dr-vm-root -n dr-gitops-poc --wait=true
    oc apply -f recovery/01-restore.yaml
-   oc wait --for=jsonpath='{.status.phase}'=Completed -n openshift-adp restore/gitops-dr-restore-gold --timeout=30m
+   oc wait restore.velero.io/gitops-dr-restore-gold -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
    oc get vm,pvc -n dr-gitops-poc
    ```
 
@@ -131,6 +131,7 @@ See [`reset/README.md`](reset/README.md) for warnings (backup data in NooBaa, st
 | DPA `Reconciled=False`, “velero prefix” | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) has `prefix: velero`. |
 | BSL `Unavailable`, x509 to `s3.openshift-storage` | DPA has `insecureSkipTLSVerify: "true"` (in-cluster S3 CA). |
 | `oc wait subscription` NotFound | Use `subscription.operators.coreos.com/redhat-oadp-operator`. |
+| `oc wait restore/…` **NotFound** (mentions `cluster.open-cluster-management.io`) | Short name `restore`/`backup` can bind to **ACM**, not Velero. Use `restore.velero.io/…` and `backup.velero.io/…`. |
 
 ---
 
