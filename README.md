@@ -15,7 +15,7 @@ This repository holds **OpenShift API for Data Protection (OADP)** install and b
 | 1 | [`setup/01-oadp-operator.yaml`](setup/01-oadp-operator.yaml) | Creates `openshift-adp`, an `OperatorGroup`, and a `Subscription` to **redhat-oadp-operator** (stable channel). |
 | 2 | [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) | Creates an **ObjectBucketClaim** `velero-dr-noobaa` with a fixed **bucket name** `velero-gitops-dr-poc` for predictable Velero configuration. |
 | 3 | [`setup/03-cloud-credentials.yaml`](setup/03-cloud-credentials.yaml) | RBAC plus a **Job** that reads the OBC Secret and creates **`Secret/cloud-credentials`** with Velero’s expected **`cloud`** key (AWS INI profile). |
-| 4 | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) | **`DataProtectionApplication`** pointing at the NooBaa S3 endpoint (`https://s3.openshift-storage.svc.cluster.local`), the bucket above, and the `kubevirt` + `csi` plugins (with `EnableCSI`). |
+| 4 | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) | **`DataProtectionApplication`** pointing at the NooBaa S3 endpoint (`https://s3.openshift-storage.svc.cluster.local`), the bucket above, object key **`prefix: velero`** (required by OADP when image backup is enabled), and the `kubevirt` + `csi` plugins (with `EnableCSI`). |
 
 **Apply order matters** because the OADP CRD is not present until the operator installs, and the DPA needs the `cloud-credentials` Secret.
 
@@ -63,10 +63,14 @@ Use this when you are not driving the folder from Argo CD (hooks in file **03** 
 2. **Wait until OADP is installed** (CRDs and CSV must exist before the DPA).
 
    ```bash
+   oc wait --for=jsonpath='{.status.state}'=AtLatestKnown \
+     -n openshift-adp subscription.operators.coreos.com/redhat-oadp-operator --timeout=20m
    oc wait --for=jsonpath='{.status.phase}'=Succeeded \
-     -n openshift-adp subscription/redhat-oadp-operator --timeout=20m
+     -n openshift-adp csv -l operators.coreos.com/redhat-oadp-operator.openshift-adp --timeout=15m
    oc get csv -n openshift-adp
    ```
+
+   If `oc wait subscription...` fails with **NotFound** for `subscriptions.apps.open-cluster-management.io`, you are hitting the wrong API group: always use **`subscription.operators.coreos.com`** (as above).
 
 3. **Provision the NooBaa bucket claim**
 
@@ -107,6 +111,26 @@ The bucket name is fixed in two places so Velero configuration stays predictable
 - `spec.backupLocations[0].velero.objectStorage.bucket` in [`setup/04-dpa.yaml`](setup/04-dpa.yaml)
 
 If you change one, change the other to the **same** value. If MCG reports a name collision, pick a new globally unique bucket name in both files.
+
+The **`objectStorage.prefix`** in [`setup/04-dpa.yaml`](setup/04-dpa.yaml) must begin with **`velero`** unless you set `spec.configuration.velero.backupImages` to `false` on the DPA. Otherwise the operator sets `Reconciled=False` with: *BackupLocation must have velero prefix when backupImages is not set to false*.
+
+---
+
+## Troubleshooting
+
+### `RECONCILED` is `False` and no `BackupStorageLocation`
+
+Describe the DPA and read `status.conditions`:
+
+```bash
+oc get dataprotectionapplication dr-poc-dpa -n openshift-adp -o yaml
+```
+
+If the message mentions the **velero prefix**, set `spec.backupLocations[0].velero.objectStorage.prefix` to a value such as `velero` (see note above), then `oc apply -f setup/04-dpa.yaml` again.
+
+### `oc wait subscription` returns NotFound
+
+Use the full resource name **`subscription.operators.coreos.com/redhat-oadp-operator`** (see step 2 in Option B).
 
 ---
 

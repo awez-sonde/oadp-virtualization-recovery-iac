@@ -18,7 +18,8 @@ spec:
           key: cloud
         objectStorage:
           bucket: velero-gitops-dr-poc
-          prefix: ""
+          # OADP requires a prefix starting with "velero" unless configuration.backupImages is false.
+          prefix: velero
         config:
           region: us-east-1
           s3Url: https://s3.openshift-storage.svc.cluster.local
