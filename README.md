@@ -19,6 +19,7 @@ This repo is a **minimal proof of concept**: OADP to NooBaa, a small KubeVirt wo
 | [`backup/`](backup/) | Example **Velero `Backup`** (apply manually or from CI; not synced by default Argo app) |
 | [`recovery/`](recovery/) | **Velero `Restore`** (apply only when you mean to restore) |
 | [`argocd-apps/`](argocd-apps/) | Optional **Argo CD Applications** (OpenShift GitOps) |
+| [`reset/`](reset/) | **Tear down** script: removes PoC namespaces, OADP, Velero backups/restores, optional Argo apps ([`reset/README.md`](reset/README.md)) |
 
 Clone **once** into an empty folder (avoid `git clone …` inside another checkout of the same repo, or you get a nested duplicate path).
 
@@ -98,6 +99,18 @@ Confirm PVC **`test-dr-vm-root`** and VM **`test-dr-vm`** match Git—Argo would
 5. Before restore: **disable auto-sync** on the workload app (or delete the app temporarily) so Argo does not prune objects while Velero restores. Then **manually sync** `dr-poc-recovery` once.
 
 `argocd.argoproj.io/*` annotations under `setup/` only affect Argo; **`oc` ignores them**.
+
+---
+
+## Reset / tear down
+
+To **remove the PoC** from the cluster (OADP operator, `openshift-adp`, Velero backups/restores, `dr-gitops-poc`, optional Argo Applications):
+
+```bash
+RESET_POC_CONFIRM=yes ./reset/reset-poc.sh
+```
+
+See [`reset/README.md`](reset/README.md) for warnings (backup data in NooBaa, stuck namespaces, `--skip-argo`).
 
 ---
 
