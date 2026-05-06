@@ -1,140 +1,232 @@
-# Disaster Recovery as Code — OADP + GitOps (PoC)
+# OADP + GitOps DR PoC
 
-## Why this exists
+Small example: back up a KubeVirt VM with Velero (OADP), store backups on NooBaa, restore so PVC names stay stable enough that GitOps (Argo CD) would not “fix” a recovered disk back to empty.
 
-**Problem:** Restoring KubeVirt VMs with the native **`VirtualMachineRestore`** API on ODF (Ceph RBD) often follows a storage workflow that **recreates** volumes. To avoid collisions, KubeVirt may assign **new, random PVC names** (for example `restore-<uuid>-<disk>`). **Argo CD** compares the cluster to Git: it sees drift, tries to **delete** the recovered disk, and recreate a blank PVC from the manifest—**destroying the restore**.
+## Background (short)
 
-**What we prove:** **OADP (Velero + kubevirt/csi plugins)** backs up Kubernetes resources and storage. On restore, **PVCs and VMs come back with the same names as in Git** (for example `test-dr-vm-root`). Argo CD can report **`Synced`** / **`Healthy`** without fighting the recovered data.
+KubeVirt’s own `VirtualMachineRestore` flow on Ceph RBD often ends up with new PVC names. Argo CD compares the cluster to Git, sees names that do not match the manifest, and may delete the recovered volume and recreate what Git says. That undoes the restore. Here we use OADP instead so the restored objects line up with what you would keep in Git (same PVC name, same VM name).
 
-This repo is a **minimal proof of concept**: OADP to NooBaa, a small KubeVirt workload, an example **Backup**, a **Restore** manifest, and optional **Argo CD `Application`** objects.
+This repo is only a wiring demo: manifests under `setup/`, one test VM, one Backup CR, one Restore CR, optional Argo `Application` YAML.
 
----
+## What’s in each folder
 
-## Layout
+| Directory | Contents |
+|-----------|----------|
+| [`setup/`](setup/) | OADP subscription, NooBaa bucket claim, bootstrap job for Velero credentials, `DataProtectionApplication` |
+| [`test-workload/`](test-workload/) | Namespace, `DataVolume`, `VirtualMachine` (fixed PVC name `test-dr-vm-root`) |
+| [`backup/`](backup/) | Example Velero `Backup` (apply by hand or from CI; not part of the default Argo workload app) |
+| [`recovery/`](recovery/) | Example Velero `Restore` (apply only when you really want a restore) |
+| [`argocd-apps/`](argocd-apps/) | Optional GitOps `Application` objects |
+| [`reset/`](reset/) | Script to tear the PoC down; see [`reset/README.md`](reset/README.md) |
 
-| Directory | Purpose |
-|-----------|---------|
-| [`setup/`](setup/) | OADP operator, NooBaa bucket claim, Velero credentials job, **DataProtectionApplication** |
-| [`test-workload/`](test-workload/) | Namespace + **DataVolume** + **VirtualMachine** (predictable PVC name) |
-| [`backup/`](backup/) | Example **Velero `Backup`** (apply manually or from CI; not synced by default Argo app) |
-| [`recovery/`](recovery/) | **Velero `Restore`** (apply only when you mean to restore) |
-| [`argocd-apps/`](argocd-apps/) | Optional **Argo CD Applications** (OpenShift GitOps) |
-| [`reset/`](reset/) | **Tear down** script: removes PoC namespaces, OADP, Velero backups/restores, optional Argo apps ([`reset/README.md`](reset/README.md)) |
+Clone into its own directory once. Nesting two clones of the same repo inside each other is an easy way to edit the wrong tree.
 
-Clone **once** into an empty folder (avoid `git clone …` inside another checkout of the same repo, or you get a nested duplicate path).
+## What you need on the cluster
 
----
-
-## Prerequisites
-
-- OpenShift: permissions for `openshift-adp`, `openshift-gitops` (if using Argo), and workload namespace.
-- **OpenShift Virtualization** + **CDI**; **OADP**; **NooBaa** storage class (e.g. `openshift-storage.noobaa.io`).
-- Workers can reach the CirrOS URL in the DataVolume, or change the image URL in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml).
+- Rights to create resources in `openshift-adp` and the workload namespace; GitOps namespace too if you use Argo.
+- OpenShift Virtualization, CDI, OADP operator available from OperatorHub, and a NooBaa-backed storage class (commonly `openshift-storage.noobaa.io`).
+- Worker nodes that can pull the CirrOS image used in the sample `DataVolume`, or change the URL in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml).
 
 ---
 
-## Path 1 — Manual (`oc apply`)
+## Path 1 — run everything with `oc`
 
-Skip [`argocd-apps/`](argocd-apps/). Apply in order; **do not** `oc apply -f setup/` in one shot on a brand-new cluster (CRD / credential ordering).
+Ignore [`argocd-apps/`](argocd-apps/) for this path. Apply manifests in the order below. Do not run `oc apply -f setup/` as a single bulk apply on a fresh cluster; the operator CRDs and credentials need to exist before the DPA.
 
-**Prefer one command (avoids stale shell history):** from the repo root, run [`setup/apply-oadp-stack.sh`](setup/apply-oadp-stack.sh) (`chmod +x` once if needed). It uses `jsonpath` for the OBC wait; `oc wait --for=condition=Bound` on an **ObjectBucketClaim never completes** because OBCs only set `status.phase`.
+### Part A — OADP stack (operator → bucket → Velero)
 
-1. **OADP stack**
+Goal: install the OADP operator, give Velero an S3-compatible bucket on NooBaa, drop in credentials Velero understands, then create the `DataProtectionApplication` so Velero and a default `BackupStorageLocation` come up.
 
-   ```bash
-   oc apply -f setup/01-oadp-operator.yaml
-   oc wait --for=jsonpath='{.status.state}'=AtLatestKnown \
-     -n openshift-adp subscription.operators.coreos.com/redhat-oadp-operator --timeout=20m
-   oc wait --for=jsonpath='{.status.phase}'=Succeeded \
-     -n openshift-adp csv -l operators.coreos.com/redhat-oadp-operator.openshift-adp --timeout=15m
-   oc apply -f setup/02-noobaa-obc.yaml
-   oc wait obc/velero-dr-noobaa -n openshift-adp --for=jsonpath='{.status.phase}'=Bound --timeout=15m
-   oc apply -f setup/03-cloud-credentials.yaml
-   oc wait --for=condition=complete job/velero-noobaa-creds-bootstrap -n openshift-adp --timeout=15m
-   oc apply -f setup/04-dpa.yaml
-   ```
+If you would rather not paste each block, `./setup/apply-oadp-stack.sh` from the repo root runs the same sequence (use `chmod +x` once if needed).
 
-   Wait until `oc get backupstoragelocation -n openshift-adp` shows **Available**.
+**1. Operator install (namespace, OperatorGroup, Subscription)**  
+[`setup/01-oadp-operator.yaml`](setup/01-oadp-operator.yaml) creates `openshift-adp`, wires OLM to the `redhat-oadp-operator` package, and subscribes to a release channel.
 
-2. **Workload**
+```bash
+oc apply -f setup/01-oadp-operator.yaml
+```
 
-   ```bash
-   oc apply -f test-workload/01-test-vm.yaml
-   oc wait datavolume test-dr-vm-root -n dr-gitops-poc --for=jsonpath='{.status.phase}'=Succeeded --timeout=30m
-   oc wait virtualmachine test-dr-vm -n dr-gitops-poc --for=jsonpath='{.status.printableStatus}'=Running --timeout=15m
-   ```
+**2. Wait for the subscription**  
+OLM still has to reconcile the catalog and mark the subscription healthy before the operator install proceeds.
 
-3. **Backup** (name must match `spec.backupName` in [`recovery/01-restore.yaml`](recovery/01-restore.yaml))
+```bash
+oc wait --for=jsonpath='{.status.state}'=AtLatestKnown \
+  -n openshift-adp subscription.operators.coreos.com/redhat-oadp-operator --timeout=20m
+```
 
-   ```bash
-   oc apply -f backup/01-backup-gitops-dr-gold.yaml
-   oc wait backup.velero.io/gitops-dr-gold-backup -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
-   ```
+**3. Wait for the ClusterServiceVersion**  
+The CSV is the installed operator instance. When its phase is `Succeeded`, the OADP controller and CRDs you need later are in place.
 
-4. **Optional DR drill:** delete VM + DataVolume; then restore:
+```bash
+oc wait --for=jsonpath='{.status.phase}'=Succeeded \
+  -n openshift-adp csv -l operators.coreos.com/redhat-oadp-operator.openshift-adp --timeout=15m
+```
 
-   ```bash
-   oc delete vm test-dr-vm -n dr-gitops-poc --wait=true
-   oc delete datavolume test-dr-vm-root -n dr-gitops-poc --wait=true
-   oc apply -f recovery/01-restore.yaml
-   oc wait restore.velero.io/gitops-dr-restore-gold -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
-   oc get vm,pvc -n dr-gitops-poc
-   ```
+**4. Object bucket claim (NooBaa bucket + keys)**  
+[`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) asks the Multicloud Object Gateway for a bucket and a Secret with access keys. The bucket name is fixed so the DPA can reference it from Git.
 
-Confirm PVC **`test-dr-vm-root`** and VM **`test-dr-vm`** match Git—Argo would stay **Synced** if this directory were managed by an Application.
+```bash
+oc apply -f setup/02-noobaa-obc.yaml
+```
+
+**5. Wait until the claim is bound**  
+ObjectBucketClaims expose readiness as `status.phase`, not as a Kubernetes “Bound” condition, so use a jsonpath wait (a plain `condition=Bound` wait on an OBC will hang).
+
+```bash
+oc wait obc/velero-dr-noobaa -n openshift-adp --for=jsonpath='{.status.phase}'=Bound --timeout=15m
+```
+
+**6. Velero credentials Secret**  
+[`setup/03-cloud-credentials.yaml`](setup/03-cloud-credentials.yaml) defines a Job that reads the OBC Secret and writes `cloud-credentials` in the shape the Velero AWS plugin expects (one key containing an INI profile).
+
+```bash
+oc apply -f setup/03-cloud-credentials.yaml
+```
+
+**7. Wait for that Job**  
+The job exits once the Secret exists.
+
+```bash
+oc wait --for=condition=complete job/velero-noobaa-creds-bootstrap -n openshift-adp --timeout=15m
+```
+
+**8. DataProtectionApplication**  
+[`setup/04-dpa.yaml`](setup/04-dpa.yaml) tells the OADP operator to deploy Velero with the kubevirt/openshift/aws/csi plugins, node agent, and a `BackupStorageLocation` pointing at the NooBaa S3 endpoint.
+
+```bash
+oc apply -f setup/04-dpa.yaml
+```
+
+**9. Sanity check**  
+Until this shows `Available`, Velero will not run backups cleanly.
+
+```bash
+oc get backupstoragelocation -n openshift-adp
+```
 
 ---
 
-## Path 2 — OpenShift GitOps (Argo CD)
+### Part B — workload (create a VM you will back up)
 
-1. Edit **`spec.source.repoURL`** in each file under [`argocd-apps/`](argocd-apps/) if not using the default GitHub URL.
-2. Apply the three Applications into **`openshift-gitops`** (or your Argo CD namespace).
+Here you are not doing DR yet. You are standing up a disposable Linux VM so there is something in `dr-gitops-poc` worth backing up. Later steps delete it on purpose to simulate data loss.
 
-| App | Path | Sync | Destination |
-|-----|------|------|---------------|
-| `dr-poc-setup` | `setup` | Auto | `openshift-adp` |
-| `dr-poc-workload` | `test-workload` | Auto | `dr-gitops-poc` |
-| `dr-poc-recovery` | `recovery` | **Manual only** | `openshift-adp` |
+**1. Apply the VM stack**  
+[`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) creates the namespace, a CDI `DataVolume` (imports a small CirrOS image into a PVC named `test-dr-vm-root`), and a `VirtualMachine` that uses that disk.
 
-3. Sync **setup**, then **workload**; wait for BSL **Available** and VM **Running**.
-4. **Backup:** `oc apply -f backup/01-backup-gitops-dr-gold.yaml` (or your pipeline). The workload Argo app **only** includes `01-test-vm.yaml` so backups are not re-applied every sync.
-5. Before restore: **disable auto-sync** on the workload app (or delete the app temporarily) so Argo does not prune objects while Velero restores. Then **manually sync** `dr-poc-recovery` once.
+```bash
+oc apply -f test-workload/01-test-vm.yaml
+```
 
-`argocd.argoproj.io/*` annotations under `setup/` only affect Argo; **`oc` ignores them**.
+**2. Wait for the import disk**  
+CDI populates the PVC from HTTP; this can take several minutes depending on the cluster.
+
+```bash
+oc wait datavolume test-dr-vm-root -n dr-gitops-poc --for=jsonpath='{.status.phase}'=Succeeded --timeout=30m
+```
+
+**3. Wait for the VM**  
+KubeVirt starts the guest once the volume is ready.
+
+```bash
+oc wait virtualmachine test-dr-vm -n dr-gitops-poc --for=jsonpath='{.status.printableStatus}'=Running --timeout=15m
+```
+
+At this point you have a running VM and a stable PVC name. That matches the story this repo is trying to tell for GitOps.
 
 ---
 
-## Reset / tear down
+### Part C — backup (copy cluster state to the bucket)
 
-To **remove the PoC** from the cluster (OADP operator, `openshift-adp`, Velero backups/restores, `dr-gitops-poc`, optional Argo Applications):
+Velero reads the `Backup` spec, talks to etcd for API objects, and uses the CSI / kubevirt paths configured in the DPA to persist the workload namespace (`dr-gitops-poc`) and linked storage into the NooBaa bucket.
+
+[`backup/01-backup-gitops-dr-gold.yaml`](backup/01-backup-gitops-dr-gold.yaml) uses `metadata.name` `gitops-dr-gold-backup`. That string must stay aligned with `spec.backupName` inside [`recovery/01-restore.yaml`](recovery/01-restore.yaml).
+
+```bash
+oc apply -f backup/01-backup-gitops-dr-gold.yaml
+oc wait backup.velero.io/gitops-dr-gold-backup -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
+```
+
+Use `backup.velero.io/...` in `oc wait` (and similar commands) on clusters where the short name `backup` resolves to another API group.
+
+---
+
+### Part D — optional DR drill (delete the VM, then restore)
+
+Only do this when you want to exercise restore end-to-end. You are intentionally removing the VM and its root `DataVolume` from the cluster while the backup objects still exist in `openshift-adp` and in object storage.
+
+**1. Remove the VM and disk**  
+This simulates “the app namespace is gone” or a bad day in that namespace.
+
+```bash
+oc delete vm test-dr-vm -n dr-gitops-poc --wait=true
+oc delete datavolume test-dr-vm-root -n dr-gitops-poc --wait=true
+```
+
+**2. Restore from the backup**  
+[`recovery/01-restore.yaml`](recovery/01-restore.yaml) creates a Velero `Restore` that targets the gold backup and the same namespace list the backup used.
+
+```bash
+oc apply -f recovery/01-restore.yaml
+oc wait restore.velero.io/gitops-dr-restore-gold -n openshift-adp --for=jsonpath='{.status.phase}'=Completed --timeout=30m
+```
+
+**3. Inspect**  
+You should see `test-dr-vm` and `test-dr-vm-root` again with the same names as in Git.
+
+```bash
+oc get vm,pvc -n dr-gitops-poc
+```
+
+Again, use `restore.velero.io/...` for waits; short `restore` often binds to Open Cluster Management on the same cluster.
+
+---
+
+## Path 2 — Argo CD
+
+1. Point [`argocd-apps/`](argocd-apps/) at your Git URL (`spec.source.repoURL`) if it is not already correct.
+2. Apply the three `Application` manifests into `openshift-gitops` (or wherever your Argo lives).
+
+| Application | Path in repo | Sync | Namespace |
+|-------------|--------------|------|-----------|
+| `dr-poc-setup` | `setup` | automatic | `openshift-adp` |
+| `dr-poc-workload` | `test-workload` | automatic | `dr-gitops-poc` |
+| `dr-poc-recovery` | `recovery` | manual only | `openshift-adp` |
+
+3. Let setup finish (BSL `Available`), then workload (VM `Running`).
+4. Run backups the same way as Path 1 — `backup/` is deliberately not in the workload app so sync does not constantly re-apply a `Backup` CR.
+5. Before a restore, turn off auto-sync on the workload app (or remove it temporarily) so Argo does not prune half-created objects while Velero is still replaying the backup. Sync `dr-poc-recovery` once by hand when you are ready.
+
+Annotations under `setup/` that start with `argocd.argoproj.io/` are for Argo only; plain `oc apply` ignores them.
+
+---
+
+## Tear down
 
 ```bash
 RESET_POC_CONFIRM=yes ./reset/reset-poc.sh
 ```
 
-See [`reset/README.md`](reset/README.md) for warnings (backup data in NooBaa, stuck namespaces, `--skip-argo`).
+That removes the PoC namespaces, OADP subscription/CSV, Velero CRs, and optionally Argo apps. Read [`reset/README.md`](reset/README.md): deleting Velero `Backup` objects can delete data from the bucket depending on settings, and namespaces can stick in `Terminating` if finalizers disagree.
 
 ---
 
-## Customization
+## Things you might change
 
-- **ODF disk class:** `storageClassName` in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) (default `ocs-external-storagecluster-ceph-rbd`).
-- **NooBaa bucket:** same name in [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) `spec.bucketName` and [`setup/04-dpa.yaml`](setup/04-dpa.yaml) `objectStorage.bucket`. **`objectStorage.prefix`** must start with **`velero`** (or set `backupImages: false` on the DPA).
-- **Backup / restore names:** keep [`backup/01-backup-gitops-dr-gold.yaml`](backup/01-backup-gitops-dr-gold.yaml) `metadata.name` and [`recovery/01-restore.yaml`](recovery/01-restore.yaml) `spec.backupName` identical if you rename.
+- Disk class for the VM: `storageClassName` in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) (sample uses `ocs-external-storagecluster-ceph-rbd`).
+- Bucket name: keep [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) `spec.bucketName` and [`setup/04-dpa.yaml`](setup/04-dpa.yaml) `objectStorage.bucket` identical. The object store `prefix` in the DPA must start with `velero` unless you turn off image backup in the DPA spec.
+- Renaming the backup: change `metadata.name` in the backup file and `spec.backupName` in the restore file together.
 
 ---
 
-## Troubleshooting (short)
+## When something breaks
 
-| Symptom | Check |
-|---------|--------|
-| DPA `Reconciled=False`, “velero prefix” | [`setup/04-dpa.yaml`](setup/04-dpa.yaml) has `prefix: velero`. |
-| BSL `Unavailable`, x509 to `s3.openshift-storage` | DPA has `insecureSkipTLSVerify: "true"` (in-cluster S3 CA). |
-| `oc wait subscription` NotFound | Use `subscription.operators.coreos.com/redhat-oadp-operator`. |
-| `oc wait restore/…` **NotFound** (mentions `cluster.open-cluster-management.io`) | Short name `restore`/`backup` can bind to **ACM**, not Velero. Use `restore.velero.io/…` and `backup.velero.io/…`. |
+- DPA never reconciles, mentions Velero prefix: see `prefix: velero` under [`setup/04-dpa.yaml`](setup/04-dpa.yaml).
+- BSL `Unavailable` with TLS errors against `s3.openshift-storage`: in-cluster S3 often needs `insecureSkipTLSVerify: "true"` on the BSL config (already set in the sample DPA).
+- `oc wait` on the subscription says NotFound: use the full name `subscription.operators.coreos.com/redhat-oadp-operator`.
+- `oc wait restore/...` or `backup/...` NotFound and the error mentions `cluster.open-cluster-management.io`: your client picked the ACM API. Spell out `restore.velero.io/...` and `backup.velero.io/...`.
 
 ---
 
 ## License
 
-Example configuration only; OpenShift and Red Hat operators are under their respective licenses.
+Example YAML only. Red Hat operators and OpenShift carry their own license terms.
