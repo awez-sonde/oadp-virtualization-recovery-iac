@@ -2,20 +2,38 @@
 
 This repository holds **OpenShift API for Data Protection (OADP)** install and backup backend manifests for a GitOps-friendly disaster-recovery proof of concept. Object storage uses **Multicloud Object Gateway (NooBaa)** via an **ObjectBucketClaim** (no MinIO).
 
+## Clone and layout (read this once)
+
+**Intended layout** at the root of the clone:
+
+```text
+README.md
+setup/
+  01-oadp-operator.yaml
+  02-noobaa-obc.yaml
+  03-cloud-credentials.yaml
+  04-dpa.yaml
+```
+
+**Do not** run `git clone https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git` **inside** an existing checkout of the same repository. GitHub’s default folder name matches the repo name, so you end up with `oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/` and may accidentally commit that path. If you need a second copy, clone into a **sibling** directory or use a different folder name:
+
+```bash
+cd ~/src
+git clone https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
+cd oadp-virtualization-recovery-iac
+```
+
+Or: `git clone … oadp-dr-poc` so the inner folder name is not identical to the outer repo.
+
 ## Prerequisites
 
 - OpenShift cluster with `oc` logged in as a user who can create namespaces, subscriptions, and resources in `openshift-adp`.
 - **NooBaa** storage class available (for example `openshift-storage.noobaa.io`).
 - For GitOps: **OpenShift GitOps (Argo CD)** installed so you can create `Application` objects (typically in `openshift-gitops`).
 
-### Apply from the right copy of this repo
+### Apply from the repository root
 
-If you ran `git clone ...` **inside** an existing checkout, you may have two trees, for example:
-
-- `.../oadp-virtualization-recovery-iac/setup/` (this project’s root), and  
-- `.../oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/setup/` (nested clone).
-
-`oc apply` uses whatever YAML is on disk in your **current directory**. Run `git pull` in the folder you actually use, or remove the nested clone so you only maintain one tree.
+Always run `oc apply -f setup/...` from the **top level** of the clone (the directory that contains `README.md` and the `setup/` folder). If you see a second `setup/` only under `oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/`, you are in a nested clone; use the layout in [Clone and layout](#clone-and-layout-read-this-once) instead.
 
 ## What is in `setup/`
 
