@@ -1,0 +1,16 @@
+# ObjectBucketClaim provisions an S3-compatible bucket via Multicloud Object Gateway (NooBaa).
+# The bound claim creates a Secret (same name as the claim) with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# and a ConfigMap with BUCKET_HOST, BUCKET_NAME, etc.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: velero-dr-noobaa
+  namespace: openshift-adp
+  labels:
+    app.kubernetes.io/part-of: oadp-dr-poc
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  # Deterministic bucket name so the DataProtectionApplication can reference it in Git.
+  bucketName: velero-gitops-dr-poc
+  storageClassName: openshift-storage.noobaa.io

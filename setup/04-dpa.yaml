@@ -1,0 +1,38 @@
+# Multicloud Object Gateway (NooBaa) S3 API is exposed in-cluster as Service s3.openshift-storage.
+# Bucket name must match ObjectBucketClaim spec.bucketName (see 02-noobaa-obc.yaml).
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: dr-poc-dpa
+  namespace: openshift-adp
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-wave: "2"
+spec:
+  backupLocations:
+    - velero:
+        provider: aws
+        default: true
+        credential:
+          name: cloud-credentials
+          key: cloud
+        objectStorage:
+          bucket: velero-gitops-dr-poc
+          prefix: ""
+        config:
+          region: us-east-1
+          s3Url: https://s3.openshift-storage.svc.cluster.local
+          s3ForcePathStyle: "true"
+          insecureSkipTLSVerify: "false"
+  configuration:
+    nodeAgent:
+      enable: true
+      uploaderType: kopia
+    velero:
+      defaultPlugins:
+        - openshift
+        - aws
+        - kubevirt
+        - csi
+      featureFlags:
+        - EnableCSI
