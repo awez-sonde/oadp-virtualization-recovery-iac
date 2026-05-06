@@ -1,0 +1,29 @@
+# Red Hat OpenShift GitOps operator (OLM). See gitops-install/README.md for apply order and waits.
+# Ref: https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest/html/installing_gitops/installing-gitops-on-openshift-container-platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-gitops-operator
+  labels:
+    openshift.io/cluster-monitoring: "true"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-gitops-operator
+spec:
+  upgradeStrategy: Default
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-gitops-operator
+spec:
+  channel: latest
+  installPlanApproval: Automatic
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

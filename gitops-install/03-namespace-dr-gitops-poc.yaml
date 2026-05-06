@@ -1,0 +1,8 @@
+# Workload destination for dr-poc-workload Application. Created up front so RBAC can bind before first sync.
+# Safe to apply even if test-workload/ also declares the same namespace (idempotent).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dr-gitops-poc
+  labels:
+    app.kubernetes.io/part-of: oadp-dr-poc

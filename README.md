@@ -16,7 +16,8 @@ This repo is only a wiring demo: manifests under `setup/`, one test VM, one Back
 | [`test-workload/`](test-workload/) | Namespace, `DataVolume`, `VirtualMachine` (fixed PVC name `test-dr-vm-root`) |
 | [`backup/`](backup/) | Example Velero `Backup` (apply by hand or from CI; not part of the default Argo workload app) |
 | [`recovery/`](recovery/) | Example Velero `Restore` (apply only when you really want a restore) |
-| [`argocd-apps/`](argocd-apps/) | Optional GitOps `Application` objects |
+| [`gitops-install/`](gitops-install/) | OpenShift GitOps operator, optional `ArgoCD` overlay, RBAC for Argo to manage `openshift-adp` and `dr-gitops-poc` |
+| [`argocd-apps/`](argocd-apps/) | `Application` objects (apply after GitOps is running) |
 | [`reset/`](reset/) | Script to tear the PoC down; see [`reset/README.md`](reset/README.md) |
 
 Clone into its own directory once. Nesting two clones of the same repo inside each other is an easy way to edit the wrong tree.
@@ -189,20 +190,27 @@ Again, use `restore.velero.io/...` for waits; short `restore` often binds to Ope
 
 ## Path 2 — Argo CD
 
-1. Point [`argocd-apps/`](argocd-apps/) at your Git URL (`spec.source.repoURL`) if it is not already correct.
-2. Apply the three `Application` manifests into `openshift-gitops` (or wherever your Argo lives).
+Path 2 assumes you still bring up OADP and the workload the same way in principle, but Argo CD keeps `setup/` and `test-workload/` in sync from Git. You need the **OpenShift GitOps** operator, the **default Argo CD instance** in `openshift-gitops`, and **RBAC** so Argo’s application controller can create and update resources in `openshift-adp` and `dr-gitops-poc`.
 
-| Application | Path in repo | Sync | Namespace |
-|-------------|--------------|------|-----------|
+Follow [`gitops-install/README.md`](gitops-install/README.md): install the operator, wait for the subscription and CSV, wait until the default `ArgoCD` named `openshift-gitops` is ready, optionally apply the thin `ArgoCD` overlay in [`gitops-install/02-argocd-openshift-gitops.yaml`](gitops-install/02-argocd-openshift-gitops.yaml) (OpenShift routes / integration), create the workload namespace if you want it ahead of sync, apply the two **RoleBindings** that grant `ClusterRole` `admin` in those namespaces to `openshift-gitops-argocd-application-controller`, then apply the `Application` manifests.
+
+**Prerequisite:** `openshift-adp` must exist before [`gitops-install/05-rbac-openshift-adp.yaml`](gitops-install/05-rbac-openshift-adp.yaml). The first file under [`setup/`](setup/) creates that project; apply it once before the RBAC step even if the rest of `setup/` is still managed by Argo later.
+
+Edit `spec.source.repoURL` in each file under [`argocd-apps/`](argocd-apps/) if you are not using the default GitHub URL, then:
+
+```bash
+oc apply -f argocd-apps/
+```
+
+| Application | Path in repo | Sync | Destination namespace |
+|-------------|--------------|------|-------------------------|
 | `dr-poc-setup` | `setup` | automatic | `openshift-adp` |
 | `dr-poc-workload` | `test-workload` | automatic | `dr-gitops-poc` |
 | `dr-poc-recovery` | `recovery` | manual only | `openshift-adp` |
 
-3. Let setup finish (BSL `Available`), then workload (VM `Running`).
-4. Run backups the same way as Path 1 — `backup/` is deliberately not in the workload app so sync does not constantly re-apply a `Backup` CR.
-5. Before a restore, turn off auto-sync on the workload app (or remove it temporarily) so Argo does not prune half-created objects while Velero is still replaying the backup. Sync `dr-poc-recovery` once by hand when you are ready.
+Let the setup app finish (BSL `Available`), then the workload app (VM `Running`). Backups stay manual or pipeline-based like Path 1 (`backup/` is not in the workload app). Before a restore, pause auto-sync on the workload app (or remove it briefly) so Argo does not prune while Velero restores, then sync `dr-poc-recovery` once.
 
-Annotations under `setup/` that start with `argocd.argoproj.io/` are for Argo only; plain `oc apply` ignores them.
+Annotations under `setup/` that start with `argocd.argoproj.io/` are only for Argo; plain `oc apply` ignores them.
 
 ---
 
@@ -221,15 +229,6 @@ That removes the PoC namespaces, OADP subscription/CSV, Velero CRs, and optional
 - Disk class for the VM: `storageClassName` in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) (sample uses `ocs-external-storagecluster-ceph-rbd`).
 - Bucket name: keep [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) `spec.bucketName` and [`setup/04-dpa.yaml`](setup/04-dpa.yaml) `objectStorage.bucket` identical. The object store `prefix` in the DPA must start with `velero` unless you turn off image backup in the DPA spec.
 - Renaming the backup: change `metadata.name` in the backup file and `spec.backupName` in the restore file together.
-
----
-
-## When something breaks
-
-- DPA never reconciles, mentions Velero prefix: see `prefix: velero` under [`setup/04-dpa.yaml`](setup/04-dpa.yaml).
-- BSL `Unavailable` with TLS errors against `s3.openshift-storage`: in-cluster S3 often needs `insecureSkipTLSVerify: "true"` on the BSL config (already set in the sample DPA).
-- `oc wait` on the subscription says NotFound: use the full name `subscription.operators.coreos.com/redhat-oadp-operator`.
-- `oc wait restore/...` or `backup/...` NotFound and the error mentions `cluster.open-cluster-management.io`: your client picked the ACM API. Spell out `restore.velero.io/...` and `backup.velero.io/...`.
 
 ---
 

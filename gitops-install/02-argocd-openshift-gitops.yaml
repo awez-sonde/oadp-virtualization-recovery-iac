@@ -1,0 +1,12 @@
+# Default Argo CD instance (same name the operator creates in openshift-gitops).
+# Apply only after `oc get argocd openshift-gitops -n openshift-gitops` exists.
+# You cannot run two ArgoCD resources in one namespace. This manifest is a thin overlay (OpenShift routes);
+# if a client-side apply ever strips fields you rely on, skip this file and keep the operator-managed spec.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: openshift-gitops
+  namespace: openshift-gitops
+spec:
+  openshift:
+    enabled: true
