@@ -1,0 +1,16 @@
+# Example Velero Backup (apply manually when ready; not used by Argo CD in the default layout).
+# metadata.name must match spec.backupName in recovery/01-restore.yaml (default: gitops-dr-gold-backup).
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: gitops-dr-gold-backup
+  namespace: openshift-adp
+  labels:
+    dr-policy: gold
+spec:
+  includedNamespaces:
+    - dr-gitops-poc
+  labelSelector:
+    matchLabels:
+      dr-policy: gold
+  ttl: 720h

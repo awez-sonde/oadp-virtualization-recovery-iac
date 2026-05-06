@@ -8,14 +8,11 @@ This repository holds **OpenShift API for Data Protection (OADP)** install and b
 
 ```text
 README.md
-setup/
-  01-oadp-operator.yaml … 04-dpa.yaml
-test-workload/
-  01-test-vm.yaml
-recovery/
-  01-restore.yaml
-argocd-apps/
-  01-setup-app.yaml … 03-recovery-app.yaml
+setup/                 # OADP + NooBaa + DPA (no Argo CD required)
+test-workload/         # KubeVirt VM (no Argo CD required)
+recovery/              # Velero Restore template (no Argo CD required)
+examples/              # Example Velero Backup (optional; for manual flows)
+argocd-apps/           # Optional: only if you use OpenShift GitOps
 ```
 
 **Do not** run `git clone https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git` **inside** an existing checkout of the same repository. GitHub’s default folder name matches the repo name, so you end up with `oadp-virtualization-recovery-iac/oadp-virtualization-recovery-iac/` and may accidentally commit that path. If you need a second copy, clone into a **sibling** directory or use a different folder name:
@@ -32,7 +29,8 @@ Or: `git clone … oadp-dr-poc` so the inner folder name is not identical to the
 
 - OpenShift cluster with `oc` logged in as a user who can create namespaces, subscriptions, and resources in `openshift-adp`.
 - **NooBaa** storage class available (for example `openshift-storage.noobaa.io`).
-- For GitOps: **OpenShift GitOps (Argo CD)** installed so you can create `Application` objects (typically in `openshift-gitops`).
+- **OpenShift Virtualization** (KubeVirt) and **CDI** for [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml).
+- **OpenShift GitOps (Argo CD)** is **optional**. Everything except [`argocd-apps/`](argocd-apps/) can be applied with **`oc apply`** only (see [Option B — Full stack without Argo CD](#option-b--full-stack-without-argo-cd)).
 
 ### Apply from the repository root
 
@@ -57,17 +55,33 @@ Inside the YAML, ordering is reinforced for Argo CD:
 - **03**: The credential **Job** is a **PostSync** hook at **hook-wave `1`**, so it runs after the main resources (including the OBC) are applied and Argo waits for the Job to finish.
 - **04**: The **DPA** is a **PostSync** hook at **hook-wave `2`**, so it is applied **after** `cloud-credentials` exists.
 
-If you use **plain `oc apply`**, follow the manual order below so you do not create the DPA before the OADP CRD exists.
+If you use **plain `oc apply`**, follow [Option B](#option-b--full-stack-without-argo-cd) so you do not create the DPA before the OADP CRD exists.
+
+**Argo CD annotations** on some `setup/` manifests (`argocd.argoproj.io/*`) are **ignored** by `oc` / Kubernetes. They only affect Argo CD when you sync those paths as an Application.
 
 ---
 
-## Option A — OpenShift GitOps (recommended order)
+## What you need with vs without Argo CD
+
+| Path | Required without Argo CD? | Role |
+|------|---------------------------|------|
+| [`setup/`](setup/) | **Yes** | OADP operator, NooBaa OBC, credentials Job, DPA |
+| [`test-workload/`](test-workload/) | **Yes** (for the VM PoC) | Namespace, DataVolume, VirtualMachine |
+| [`examples/`](examples/) | **No** (recommended for manual flows) | Example **`Backup`** CR ([`01-backup-gitops-dr-gold.yaml`](examples/01-backup-gitops-dr-gold.yaml)) you can `oc apply` when ready |
+| [`recovery/`](recovery/) | **Only at restore time** | **`Restore`** CR — apply after a matching **`Backup`** exists |
+| [`argocd-apps/`](argocd-apps/) | **No** | Optional Argo **`Application`** objects |
+
+---
+
+## Option A — OpenShift GitOps (Argo CD)
+
+Use this when **OpenShift GitOps** is installed and you want Argo to pull from Git.
 
 1. Push this repository to a Git remote your cluster can reach.
-2. Create an Argo CD **Application** whose `spec.source.path` is **`setup`** (and `spec.destination.namespace` is `openshift-adp` or cluster-scoped as appropriate for your app-of-apps pattern).
-3. **Sync the Application once** (or enable auto-sync if that matches your policy). Argo CD applies `01` and `02` in the main sync, runs the **PostSync** credential Job, then applies the **DPA** PostSync hook.
+2. Apply the manifests under [`argocd-apps/`](argocd-apps/) into **`openshift-gitops`** (adjust `metadata.namespace` if your Argo instance lives elsewhere). Edit **`spec.source.repoURL`** if you use a fork.
+3. Sync **setup** first, then **workload**, then create a **Velero `Backup`** (see [`examples/01-backup-gitops-dr-gold.yaml`](examples/01-backup-gitops-dr-gold.yaml) or your automation). Keep the **recovery** app **manual** until DR.
 
-**Verify after sync**
+**Verify after setup sync**
 
 ```bash
 oc get csv -n openshift-adp
@@ -80,9 +94,11 @@ You want the default **BackupStorageLocation** to reach **`PHASE: Available`** o
 
 ---
 
-## Option B — Manual `oc apply` (explicit order)
+## Option B — Full stack without Argo CD
 
-Use this when you are not driving the folder from Argo CD (hooks in file **03** / **04** are Argo-specific; they are ignored by `oc apply`).
+Use **`oc apply`** (or `kubectl apply`) only. **Skip** the entire [`argocd-apps/`](argocd-apps/) directory.
+
+### Phase 1 — OADP and backup storage (same order as before)
 
 1. **Install the operator**
 
@@ -129,7 +145,71 @@ Use this when you are not driving the folder from Argo CD (hooks in file **03** 
    oc get backupstoragelocation -n openshift-adp
    ```
 
+   Repeat `oc get backupstoragelocation -n openshift-adp` until the default location shows **`PHASE: Available`** (often within a few minutes after the DPA reconciles).
+
 **Do not** run `oc apply -f setup/` in one shot on a fresh cluster: Kubernetes may attempt the DPA before the OADP CRD exists, or before the credential Job has written `cloud-credentials`.
+
+### Phase 2 — Test workload (KubeVirt)
+
+7. **Deploy the VM and DataVolume**
+
+   ```bash
+   oc apply -f test-workload/01-test-vm.yaml
+   ```
+
+8. **Wait until the disk is ready and the VM is running**
+
+   ```bash
+   oc wait datavolume test-dr-vm-root -n dr-gitops-poc \
+     --for=jsonpath='{.status.phase}'=Succeeded --timeout=30m
+   oc wait virtualmachine test-dr-vm -n dr-gitops-poc \
+     --for=jsonpath='{.status.printableStatus}'=Running --timeout=15m
+   oc get pvc,vmi -n dr-gitops-poc
+   ```
+
+   If your OpenShift Virtualization version does not support `printableStatus` on `VirtualMachine`, use `oc get vm -n dr-gitops-poc -w` until the VM shows **Running**, or `oc get vmi -n dr-gitops-poc` once a **VirtualMachineInstance** exists.
+
+### Phase 3 — Backup (before any restore)
+
+9. **Create a Velero backup** whose name matches [`recovery/01-restore.yaml`](recovery/01-restore.yaml) (`spec.backupName`, default **`gitops-dr-gold-backup`**).
+
+   ```bash
+   oc apply -f examples/01-backup-gitops-dr-gold.yaml
+   oc wait --for=jsonpath='{.status.phase}'=Completed \
+     -n openshift-adp backup/gitops-dr-gold-backup --timeout=30m
+   ```
+
+   To use another backup name, change **`metadata.name`** in the example file and **`spec.backupName`** in `recovery/01-restore.yaml` so they match.
+
+### Phase 4 — Simulated disaster (optional lab)
+
+10. **Simulate loss of the workload** (Velero did not delete the backup in object storage):
+
+    ```bash
+    oc delete virtualmachine test-dr-vm -n dr-gitops-poc --wait=true
+    oc delete datavolume test-dr-vm-root -n dr-gitops-poc --wait=true
+    ```
+
+    Without Argo CD there is no “pause auto-sync” step; you are only removing cluster objects so the **Restore** can recreate them.
+
+### Phase 5 — Restore
+
+11. **Apply the Restore CR** only after the **Backup** from phase 3 has **`phase: Completed`** (or you are re-using an older completed backup with the same name):
+
+    ```bash
+    oc apply -f recovery/01-restore.yaml
+    oc wait --for=jsonpath='{.status.phase}'=Completed \
+      -n openshift-adp restore/gitops-dr-restore-gold --timeout=30m
+    ```
+
+12. **Verify** the VM and PVC names match what Git / your manifests expect (e.g. PVC **`test-dr-vm-root`**):
+
+    ```bash
+    oc get vm,pvc -n dr-gitops-poc
+    oc get virtualmachineinstance -n dr-gitops-poc
+    ```
+
+If you later adopt Argo CD only for **desired state** (not for OADP install), you can still `oc apply -f test-workload/` and manage the same YAML from Git; the important part for DR is **stable resource names** after restore.
 
 ---
 
@@ -149,11 +229,13 @@ Use this when you are not driving the folder from Argo CD (hooks in file **03** 
 |------|---------|
 | [`recovery/01-restore.yaml`](recovery/01-restore.yaml) | **`Restore`** in **`openshift-adp`**, **`restorePVs: true`**, **`backupName: gitops-dr-gold-backup`**, scoped to **`dr-gitops-poc`**. |
 
-The **Velero `Backup`** that produces that archive is **not** committed here on purpose: backups are point-in-time operations (CLI, script, or a separate GitOps app). Whatever creates the backup must use the **same `metadata.name`** as `spec.backupName` in this Restore, or you edit `01-restore.yaml` to match your backup name.
+The matching **`Backup`** is provided as an **optional example** in [`examples/01-backup-gitops-dr-gold.yaml`](examples/01-backup-gitops-dr-gold.yaml) for manual `oc apply` flows. You can instead create backups from the CLI or automation; the backup **`metadata.name`** must match **`spec.backupName`** in this Restore (or edit `01-restore.yaml`).
 
 ---
 
-## `argocd-apps/` — Argo CD `Application` objects
+## `argocd-apps/` — Argo CD `Application` objects (optional)
+
+Skip this directory entirely if you follow [Option B](#option-b--full-stack-without-argo-cd).
 
 Apply these into **`openshift-gitops`** (or the namespace where your Argo CD instance watches **`Application`** CRs). Set **`spec.source.repoURL`** to your fork if needed.
 
@@ -173,7 +255,7 @@ Apply these into **`openshift-gitops`** (or the namespace where your Argo CD ins
 2. **Label selector on Backup:** when you create a `Backup` CR (YAML or CLI), use `spec.labelSelector` (or `kubectl label` strategy) so only gold workloads are captured. Keep **`includedNamespaces`** / backup scope aligned with **`spec.includedNamespaces`** on the Restore.
 3. **PVC naming:** the DataVolume flow yields a PVC with the **same name as the DataVolume** (`test-dr-vm-root`). After restore, that predictable name helps Argo CD **selfHeal** match desired state instead of recreating a “new” PVC.
 4. **Recovery app without auto-sync:** omitting `automated` under `syncPolicy` is enough for “manual only”; optional hardening is an Argo **AppProject** deny rule for automated sync on that app.
-5. **`CreateNamespace=true`:** allows Argo to create **`dr-gitops-poc`** from the workload app. The workload manifest also defines the Namespace; first sync is idempotent.
+5. **`CreateNamespace=true`:** on Argo `Application` objects allows Argo to create **`dr-gitops-poc`**. Without Argo CD, the same namespace is created by **`test-workload/01-test-vm.yaml`** when you `oc apply` it.
 
 ---
 
