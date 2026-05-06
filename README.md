@@ -46,7 +46,7 @@ Skip [`argocd-apps/`](argocd-apps/). Apply in order; **do not** `oc apply -f set
    oc wait --for=jsonpath='{.status.phase}'=Succeeded \
      -n openshift-adp csv -l operators.coreos.com/redhat-oadp-operator.openshift-adp --timeout=15m
    oc apply -f setup/02-noobaa-obc.yaml
-   oc wait --for=condition=Bound obc/velero-dr-noobaa -n openshift-adp --timeout=15m
+   oc wait obc/velero-dr-noobaa -n openshift-adp --for=jsonpath='{.status.phase}'=Bound --timeout=15m
    oc apply -f setup/03-cloud-credentials.yaml
    oc wait --for=condition=complete job/velero-noobaa-creds-bootstrap -n openshift-adp --timeout=15m
    oc apply -f setup/04-dpa.yaml
