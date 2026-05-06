@@ -37,6 +37,8 @@ Clone **once** into an empty folder (avoid `git clone …` inside another checko
 
 Skip [`argocd-apps/`](argocd-apps/). Apply in order; **do not** `oc apply -f setup/` in one shot on a brand-new cluster (CRD / credential ordering).
 
+**Prefer one command (avoids stale shell history):** from the repo root, run [`setup/apply-oadp-stack.sh`](setup/apply-oadp-stack.sh) (`chmod +x` once if needed). It uses `jsonpath` for the OBC wait; `oc wait --for=condition=Bound` on an **ObjectBucketClaim never completes** because OBCs only set `status.phase`.
+
 1. **OADP stack**
 
    ```bash
