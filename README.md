@@ -33,6 +33,8 @@ Clone into its own directory once. Nesting two clones of the same repo inside ea
 
 Ignore [`argocd-apps/`](argocd-apps/) for this path. Apply manifests in the order below. Do not run `oc apply -f setup/` as a single bulk apply on a fresh cluster; the operator CRDs and credentials need to exist before the DPA.
 
+Velero’s **backup and restore are ordinary Kubernetes objects** (`Backup` and `Restore` in the `velero.io` API group). You describe intent in YAML: a `Backup` names what to include (namespaces, labels, options); a `Restore` names which completed backup to replay. The Velero deployment watches those resources, runs the work, and writes progress into `status` (for example `phase: Completed`). The heavy data lives in object storage behind the `BackupStorageLocation`; the CRs in `openshift-adp` are the contract and bookkeeping. So in this path you “retrieve” the workload by **applying** a `Restore` manifest the same way you applied the `Backup`—no separate restore CLI is required for the flow in this repo.
+
 ### Part A — OADP stack (operator → bucket → Velero)
 
 Goal: install the OADP operator, give Velero an S3-compatible bucket on NooBaa, drop in credentials Velero understands, then create the `DataProtectionApplication` so Velero and a default `BackupStorageLocation` come up.
@@ -70,14 +72,18 @@ oc apply -f setup/02-noobaa-obc.yaml
 ```
 
 **5. Wait until the claim is bound**  
-ObjectBucketClaims expose readiness as `status.phase`, not as a Kubernetes “Bound” condition, so use a jsonpath wait (a plain `condition=Bound` wait on an OBC will hang).
+The claim is ready when `status.phase` is `Bound`.
 
 ```bash
 oc wait obc/velero-dr-noobaa -n openshift-adp --for=jsonpath='{.status.phase}'=Bound --timeout=15m
 ```
 
 **6. Velero credentials Secret**  
-[`setup/03-cloud-credentials.yaml`](setup/03-cloud-credentials.yaml) defines a Job that reads the OBC Secret and writes `cloud-credentials` in the shape the Velero AWS plugin expects (one key containing an INI profile).
+[`setup/03-cloud-credentials.yaml`](setup/03-cloud-credentials.yaml) is the bridge between what NooBaa gives you and what this Velero install expects.
+
+When the OBC binds, the provisioner creates a Secret (same name as the claim) with **S3-style fields**: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as separate keys. That matches how many S3 clients read credentials, but it is **not** the layout the Velero **AWS** object-store plugin is wired for in this DPA. There the `DataProtectionApplication` points `credential` at a Secret named `cloud-credentials` with a **single key** (here `cloud`) whose value is a small **INI file**: a `[default]` profile block containing `aws_access_key_id` and `aws_secret_access_key` lines, the same shape the AWS SDK uses when it reads `~/.aws/credentials`.
+
+Rather than hand-copy keys into Git, the manifest defines a **ServiceAccount**, **Role**, and **Job** that run the OpenShift CLI in the cluster: wait until the OBC Secret exists, read the two keys, assemble the INI string, then `oc apply` the `cloud-credentials` Secret idempotently. The Job is safe to re-run; it only overwrites that Secret when the source keys are present. RBAC is scoped to `openshift-adp` so the bootstrap pod can read the OBC Secret and create or patch `cloud-credentials`.
 
 ```bash
 oc apply -f setup/03-cloud-credentials.yaml
@@ -137,7 +143,7 @@ At this point you have a running VM and a stable PVC name. That matches the stor
 
 ### Part C — backup (copy cluster state to the bucket)
 
-Velero reads the `Backup` spec, talks to etcd for API objects, and uses the CSI / kubevirt paths configured in the DPA to persist the workload namespace (`dr-gitops-poc`) and linked storage into the NooBaa bucket.
+This step is entirely **declarative**: you apply [`backup/01-backup-gitops-dr-gold.yaml`](backup/01-backup-gitops-dr-gold.yaml), which creates a `Backup` resource. Velero’s controller reconciles that object: it snapshots the API resources you asked for, coordinates volume data through the plugins enabled on the DPA (OpenShift, kubevirt, CSI, AWS-style S3), and uploads the result to the bucket configured on the `BackupStorageLocation`. Status on the `Backup` CR moves to `Completed` when the run finishes; the backup tarball and metadata in the bucket are what a later restore will read.
 
 [`backup/01-backup-gitops-dr-gold.yaml`](backup/01-backup-gitops-dr-gold.yaml) uses `metadata.name` `gitops-dr-gold-backup`. That string must stay aligned with `spec.backupName` inside [`recovery/01-restore.yaml`](recovery/01-restore.yaml).
 
@@ -163,7 +169,7 @@ oc delete datavolume test-dr-vm-root -n dr-gitops-poc --wait=true
 ```
 
 **2. Restore from the backup**  
-[`recovery/01-restore.yaml`](recovery/01-restore.yaml) creates a Velero `Restore` that targets the gold backup and the same namespace list the backup used.
+[`recovery/01-restore.yaml`](recovery/01-restore.yaml) is another declarative object: a Velero `Restore` with `spec.backupName` set to the completed backup’s name. Applying it tells Velero to pull that backup’s payload from object storage and recreate resources (here `dr-gitops-poc` and the VM disk) according to the backup contents. The controller drives the restore; you wait on the same CR until `status.phase` is `Completed`.
 
 ```bash
 oc apply -f recovery/01-restore.yaml
