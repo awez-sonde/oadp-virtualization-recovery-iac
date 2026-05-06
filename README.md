@@ -229,9 +229,3 @@ That removes the PoC namespaces, OADP subscription/CSV, Velero CRs, and optional
 - Disk class for the VM: `storageClassName` in [`test-workload/01-test-vm.yaml`](test-workload/01-test-vm.yaml) (sample uses `ocs-external-storagecluster-ceph-rbd`).
 - Bucket name: keep [`setup/02-noobaa-obc.yaml`](setup/02-noobaa-obc.yaml) `spec.bucketName` and [`setup/04-dpa.yaml`](setup/04-dpa.yaml) `objectStorage.bucket` identical. The object store `prefix` in the DPA must start with `velero` unless you turn off image backup in the DPA spec.
 - Renaming the backup: change `metadata.name` in the backup file and `spec.backupName` in the restore file together.
-
----
-
-## License
-
-Example YAML only. Red Hat operators and OpenShift carry their own license terms.
