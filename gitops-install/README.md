@@ -57,11 +57,41 @@ You need **cluster-admin** (or equivalent) to install operators and to bind `Clu
    oc apply -f 05-rbac-openshift-adp.yaml
    ```
 
-7. **Applications** — from repo root, after editing `repoURL` if needed:
+7. **Applications (phase-by-phase, not all at once)** — from repo root, after editing `repoURL` in `argocd-apps/*.yaml` if needed:
 
    ```bash
-   oc apply -f argocd-apps/
+   # Phase 1: setup app only
+   oc apply -f argocd-apps/01-setup-app.yaml
+   oc get application dr-poc-setup -n openshift-gitops
    ```
+
+   Wait for `dr-poc-setup` to be `Healthy`/`Synced`, then verify:
+
+   ```bash
+   oc get backupstoragelocation -n openshift-adp
+   ```
+
+   ```bash
+   # Phase 2: workload app only
+   oc apply -f argocd-apps/02-workload-app.yaml
+   oc get application dr-poc-workload -n openshift-gitops
+   ```
+
+   Wait until the VM is running:
+
+   ```bash
+   oc wait datavolume test-dr-vm-root -n dr-gitops-poc \
+     --for=jsonpath='{.status.phase}'=Succeeded --timeout=30m
+   oc wait virtualmachine test-dr-vm -n dr-gitops-poc \
+     --for=jsonpath='{.status.printableStatus}'=Running --timeout=15m
+   ```
+
+   ```bash
+   # Phase 3: recovery app only when you need to perform a restore
+   oc apply -f argocd-apps/03-recovery-app.yaml
+   ```
+
+   Keep `dr-poc-recovery` manual: sync it only during an actual DR drill/recovery event.
 
 ## Service account name
 

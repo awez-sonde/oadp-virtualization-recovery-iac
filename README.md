@@ -143,11 +143,7 @@ This path keeps `setup/` and `test-workload/` synchronized from Git.
 2. **Update repository URLs**
    Edit `spec.source.repoURL` in files under [`argocd-apps/`](argocd-apps/) to point to your fork/repository.
 
-3. **Apply Argo CD applications**
-
-```bash
-oc apply -f argocd-apps/
-```
+3. **Create the Argo CD applications in phases (recommended)**
 
 | Application | Source path | Sync policy | Destination namespace |
 |-------------|-------------|-------------|-----------------------|
@@ -155,13 +151,46 @@ oc apply -f argocd-apps/
 | `dr-poc-workload` | `test-workload/` | Automatic | `dr-gitops-poc` |
 | `dr-poc-recovery` | `recovery/` | Manual only | `openshift-adp` |
 
+Apply them one by one:
+
+```bash
+# Phase 1: setup only
+oc apply -f argocd-apps/01-setup-app.yaml
+oc get application dr-poc-setup -n openshift-gitops
+```
+
+Wait for `dr-poc-setup` to become `Healthy`/`Synced` and confirm the `BackupStorageLocation` is `Available`:
+
+```bash
+oc get backupstoragelocation -n openshift-adp
+```
+
+```bash
+# Phase 2: workload only (after setup is healthy)
+oc apply -f argocd-apps/02-workload-app.yaml
+oc get application dr-poc-workload -n openshift-gitops
+```
+
+Wait for the VM and DataVolume to be ready:
+
+```bash
+oc wait datavolume test-dr-vm-root -n dr-gitops-poc \
+  --for=jsonpath='{.status.phase}'=Succeeded --timeout=30m
+oc wait virtualmachine test-dr-vm -n dr-gitops-poc \
+  --for=jsonpath='{.status.printableStatus}'=Running --timeout=15m
+```
+
+```bash
+# Phase 3: recovery app only when you need a restore
+oc apply -f argocd-apps/03-recovery-app.yaml
+```
+
 4. **GitOps DR drill**
-   - Wait until setup and workload applications are `Healthy`.
    - Trigger a backup manually (Path 1, Part C).
    - **Pause auto-sync** on `dr-poc-workload` before restore.
    - Simulate disaster by deleting the workload VM.
-   - Manually sync `dr-poc-recovery` to trigger restore.
-   - Re-enable auto-sync on `dr-poc-workload`.
+   - Manually sync `dr-poc-recovery` only when recovery is required.
+   - Re-enable auto-sync on `dr-poc-workload` after restore completes.
 
 If restore succeeds, Argo CD should converge to `Synced` without replacing recovered PVCs.
 
