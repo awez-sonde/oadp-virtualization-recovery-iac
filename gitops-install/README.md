@@ -93,6 +93,32 @@ You need **cluster-admin** (or equivalent) to install operators and to bind `Clu
 
    Keep `dr-poc-recovery` manual: sync it only during an actual DR drill/recovery event.
 
+## Troubleshooting: `permission denied: applications, sync` in the Argo CD UI
+
+Argo CD enforces **UI RBAC** separately from OpenShift RBAC. If you log in via OpenShift (Dex) and your token only matches policies that grant `role:readonly`, you can list Applications but **cannot click Sync**.
+
+Fix for this PoC:
+
+1. Apply the overlay in [`02-argocd-openshift-gitops.yaml`](02-argocd-openshift-gitops.yaml) (it maps `system:authenticated:oauth` to `role:admin` for workshop-style demos).
+2. Log out of the Argo CD UI, log back in, and hard-refresh the browser.
+
+For a one-off fix on an existing cluster (same effect as the overlay):
+
+```bash
+oc patch argocd openshift-gitops -n openshift-gitops --type merge -p '{
+  "spec": {
+    "rbac": {
+      "defaultPolicy": "",
+      "policy": "g, system:cluster-admins, role:admin\ng, cluster-admins, role:admin\ng, admin, role:admin\ng, system:authenticated:oauth, role:admin",
+      "scopes": "[groups]"
+    }
+  }
+}'
+oc rollout restart deployment/openshift-gitops-server -n openshift-gitops
+```
+
+**Workaround without changing RBAC:** run sync from the CLI as a user who is a cluster admin (Argo still uses your kube credentials for `argocd app sync` when configured that way), or rely on **automated sync** on `dr-poc-workload` so you never need the Sync button for Workflow 1.
+
 ## Service account name
 
 The default controller service account is usually `openshift-gitops-argocd-application-controller` in `openshift-gitops`. If `Application` sync fails with permission errors, list service accounts and align the `subjects` in `04`/`05` with the name that ends in `application-controller`:

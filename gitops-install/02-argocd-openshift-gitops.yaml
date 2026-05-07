@@ -2,6 +2,11 @@
 # Apply only after `oc get argocd openshift-gitops -n openshift-gitops` exists.
 # You cannot run two ArgoCD resources in one namespace. This manifest is a thin overlay (OpenShift routes);
 # if a client-side apply ever strips fields you rely on, skip this file and keep the operator-managed spec.
+#
+# Argo CD UI RBAC: OpenShift OAuth users land in group `system:authenticated:oauth`. Mapping that group to
+# `role:readonly` lets them see Applications but not Sync (you get "permission denied: applications, sync").
+# For this PoC workshop overlay we map that group to `role:admin` so demos can use the Sync button.
+# In production, replace this with a dedicated OpenShift group and a tighter Argo CD policy.
 apiVersion: argoproj.io/v1beta1
 kind: ArgoCD
 metadata:
@@ -10,3 +15,11 @@ metadata:
 spec:
   openshift:
     enabled: true
+  rbac:
+    defaultPolicy: ""
+    policy: |
+      g, system:cluster-admins, role:admin
+      g, cluster-admins, role:admin
+      g, admin, role:admin
+      g, system:authenticated:oauth, role:admin
+    scopes: '[groups]'

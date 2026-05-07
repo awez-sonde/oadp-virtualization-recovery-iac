@@ -138,7 +138,7 @@ This path keeps `setup/` and `test-workload/` synchronized from Git.
    Follow [`gitops-install/README.md`](gitops-install/README.md) to:
    - install the operator,
    - wait for the default `openshift-gitops` Argo CD instance,
-   - apply required RBAC.
+   - apply required RBAC (including [`gitops-install/02-argocd-openshift-gitops.yaml`](gitops-install/02-argocd-openshift-gitops.yaml) so OpenShift OAuth users can use **Sync** in the UI; see troubleshooting there if you see `permission denied: applications, sync`).
 
 2. **Update repository URLs**
    Edit `spec.source.repoURL` in files under [`argocd-apps/`](argocd-apps/) to point to your fork/repository.
