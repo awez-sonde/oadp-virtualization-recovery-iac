@@ -1,0 +1,23 @@
+# Manual sync only: no spec.syncPolicy.automated.
+# Apply this Application after setup is healthy. Click Sync when you want Velero to reconcile the Backup CR
+# (after the VM is running and BackupStorageLocation is Available). Re-sync after changing backup YAML or
+# deleting the Backup object in-cluster if you need a new run with the same metadata.name.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dr-poc-backup
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/awez-sonde/oadp-virtualization-recovery-iac.git
+    targetRevision: main
+    path: backup
+    directory:
+      include: "01-backup-gitops-dr-gold.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-adp
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

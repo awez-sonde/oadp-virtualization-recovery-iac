@@ -87,11 +87,17 @@ You need **cluster-admin** (or equivalent) to install operators and to bind `Clu
    ```
 
    ```bash
-   # Phase 3: recovery app only when you need to perform a restore
+   # Phase 3: backup app (manual Sync creates / reconciles the Velero Backup CR)
+   oc apply -f argocd-apps/04-backup-app.yaml
+   oc get application dr-poc-backup -n openshift-gitops
+   ```
+
+   ```bash
+   # Phase 4: recovery app only when you need to perform a restore
    oc apply -f argocd-apps/03-recovery-app.yaml
    ```
 
-   Keep `dr-poc-recovery` manual: sync it only during an actual DR drill/recovery event.
+   Keep `dr-poc-backup` and `dr-poc-recovery` manual: sync backup when you want a point-in-time; sync recovery only during a DR drill.
 
 ## Troubleshooting: `permission denied: applications, sync` in the Argo CD UI
 

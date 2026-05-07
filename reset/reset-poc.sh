@@ -38,7 +38,7 @@ log() { echo "[reset-poc] $*"; }
 if [[ "${SKIP_ARGO}" != "true" ]] && oc get ns openshift-gitops &>/dev/null; then
   if oc get crd applications.argoproj.io &>/dev/null; then
     log "Deleting Argo CD Applications in openshift-gitops (if present)…"
-    oc delete applications.argoproj.io dr-poc-recovery dr-poc-workload dr-poc-setup \
+    oc delete applications.argoproj.io dr-poc-recovery dr-poc-backup dr-poc-workload dr-poc-setup \
       -n openshift-gitops --ignore-not-found --wait=true --timeout=3m || true
   else
     log "Argo CD Application CRD not found; skipping Application deletes."

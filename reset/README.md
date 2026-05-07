@@ -2,7 +2,7 @@
 
 [`reset-poc.sh`](reset-poc.sh) removes, on the **current** OpenShift cluster context:
 
-- Argo CD **Applications** `dr-poc-setup`, `dr-poc-workload`, `dr-poc-recovery` in `openshift-gitops` (unless `--skip-argo`)
+- Argo CD **Applications** `dr-poc-setup`, `dr-poc-workload`, `dr-poc-backup`, `dr-poc-recovery` in `openshift-gitops` (unless `--skip-argo`)
 - Namespace **`dr-gitops-poc`** (VM, DataVolume, PVCs)
 - Namespace **`openshift-adp`**: Velero **Restore** / **Backup** / **Schedule** CRs, **DataProtectionApplication**, **Subscription** / **CSV** / **InstallPlan** for OADP, **OperatorGroup**, **ObjectBucketClaim**, and everything else in that namespace
 

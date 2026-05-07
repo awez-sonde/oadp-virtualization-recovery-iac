@@ -21,7 +21,7 @@ When using KubeVirt's native `VirtualMachineRestore` API on storage backends lik
 | [`backup/`](backup/) | Example Velero `Backup` Custom Resource (CR). |
 | [`recovery/`](recovery/) | Example Velero `Restore` CR (apply only during DR drills). |
 | [`gitops-install/`](gitops-install/) | OpenShift GitOps operator setup, `ArgoCD` overlay, and required RBAC. |
-| [`argocd-apps/`](argocd-apps/) | Argo CD `Application` manifests for syncing setup/workload/recovery paths. |
+| [`argocd-apps/`](argocd-apps/) | Argo CD `Application` manifests for setup, workload, backup (manual), and recovery (manual). |
 | [`reset/`](reset/) | Automated teardown scripts. See [`reset/README.md`](reset/README.md). |
 
 > Clone this repository into its own isolated directory to avoid nested Git trees.
@@ -149,6 +149,7 @@ This path keeps `setup/` and `test-workload/` synchronized from Git.
 |-------------|-------------|-------------|-----------------------|
 | `dr-poc-setup` | `setup/` | Automatic | `openshift-adp` |
 | `dr-poc-workload` | `test-workload/` | Automatic | `dr-gitops-poc` |
+| `dr-poc-backup` | `backup/` | Manual only | `openshift-adp` |
 | `dr-poc-recovery` | `recovery/` | Manual only | `openshift-adp` |
 
 Apply them one by one:
@@ -181,12 +182,18 @@ oc wait virtualmachine test-dr-vm -n dr-gitops-poc \
 ```
 
 ```bash
-# Phase 3: recovery app only when you need a restore
+# Phase 3: backup app (register only; Velero runs when you Sync)
+oc apply -f argocd-apps/04-backup-app.yaml
+oc get application dr-poc-backup -n openshift-gitops
+```
+
+```bash
+# Phase 4: recovery app only when you need a restore
 oc apply -f argocd-apps/03-recovery-app.yaml
 ```
 
 4. **GitOps DR drill**
-   - Trigger a backup manually (Path 1, Part C).
+   - Manually **Sync** `dr-poc-backup` when you want a backup (or use Path 1, Part C).
    - **Pause auto-sync** on `dr-poc-workload` before restore.
    - Simulate disaster by deleting the workload VM.
    - Manually sync `dr-poc-recovery` only when recovery is required.
